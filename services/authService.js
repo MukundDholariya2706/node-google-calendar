@@ -3,6 +3,7 @@ const { google } = require("googleapis");
 const jwt = require("jsonwebtoken");
 const { sendResponse } = require("./responseService");
 const Authentication = require("../models/authenticationSchema");
+const moment = require("moment");
 
 const oauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
@@ -55,7 +56,7 @@ class AuthService {
     try {
       const { email, startDate, endDate } = req.body;
 
-      let user_details = await Authentication.findOne({ email });
+      let user_details = await Authentication.findOne({ email }).lean();
 
       oauth2Client.setCredentials({
         access_token: user_details.access_token,
@@ -69,9 +70,17 @@ class AuthService {
       const calendar = google.calendar({ version: "v3", auth: oauth2Client });
       const calendarIds = [
         "primary", // User's primary calendar
-        "en-gb.indian#holiday@group.v.calendar.google.com", // Example for US holidays
+        // "en-gb.indian#holiday@group.v.calendar.google.com", // Example for US holidays
         // Add more calendar IDs here as needed
       ];
+
+      let formatedEndDate = moment(endDate, "DD-MM-YYYY").format("MM-DD-YYYY");
+      let formatedStartDate = moment(startDate, "DD-MM-YYYY").format(
+        "MM-DD-YYYY"
+      );
+
+      console.log(new Date(formatedEndDate).toISOString(), 'formatedEndDate' );
+      console.log(new Date(formatedStartDate).toISOString(), 'formatedStartDate' );
 
       // Function to fetch events from a single calendar
       const fetchEventsFromCalendar = (calendarId) => {
@@ -79,10 +88,9 @@ class AuthService {
           calendar.events.list(
             {
               calendarId: calendarId,
-              timeMin: new Date().toISOString(),
-              maxResults: 10,
-              singleEvents: true,
-              orderBy: "startTime",
+              timeMin: new Date(formatedStartDate).toISOString(),
+              timeMax: new Date(formatedEndDate).toISOString(),
+              singleEvents: true
             },
             (err, response) => {
               if (err) return reject(err);
@@ -93,19 +101,48 @@ class AuthService {
       };
 
       // Fetch events from all specified calendars in parallel
-      const allEventsPromises = calendarIds.map(fetchEventsFromCalendar);
+      const allEventsPromises = user_details?.calendarId?.map(
+        fetchEventsFromCalendar
+      );
 
       try {
         const allEvents = await Promise.all(allEventsPromises);
         const flattenedEvents = allEvents.flat();
-        console.log(flattenedEvents, 'flattenedEvents');
-        return sendResponse(res, 200, true, "Google Calender Event", flattenedEvents);
+        return sendResponse(
+          res,
+          200,
+          true,
+          "Google Calender Event",
+          flattenedEvents
+        );
       } catch (error) {
         console.error("Error fetching events:", error);
         return sendResponse(res, 500, false, error.message, {
           message: error.message,
         });
       }
+    } catch (error) {
+      return sendResponse(res, 500, false, error.message, {
+        message: error.message,
+      });
+    }
+  };
+
+  addCalenderId = async (req, res) => {
+    try {
+      const { email, newCalendarId } = req.body;
+
+      const updatedUser = await Authentication.findOneAndUpdate(
+        { email },
+        { $addToSet: { calendarId: newCalendarId } },
+        { new: true }
+      ).lean();
+
+      if (!updatedUser) {
+        return sendResponse(res, 400, false, "User not found", undefined);
+      }
+
+      return sendResponse(res, 200, true, "Calendar Id added", updatedUser);
     } catch (error) {
       return sendResponse(res, 500, false, error.message, {
         message: error.message,

@@ -14,6 +14,11 @@ let authenticationSchema = new mongoose.Schema(
       type: String,
       required: false,
     },
+    calendarId: {
+      type: [String],
+      required: false,
+      default: ["primary"]
+    }
   },
   {
     timestamps: true,
